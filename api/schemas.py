@@ -117,7 +117,9 @@ class PasteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1)
-    filename: str = Field(default="pasted_text.txt", min_length=1, max_length=255)
+    filename: str = Field(
+        default="Pasted note", min_length=1, max_length=255, description="Display title of the note."
+    )
 
 
 class IngestOutcome(Out):

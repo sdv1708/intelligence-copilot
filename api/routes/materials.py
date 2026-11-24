@@ -90,19 +90,14 @@ async def upload_materials(
 
 @router.post("/meetings/{meeting_id}/materials/text", response_model=IngestOutcome)
 def paste_material(meeting_id: str, payload: PasteRequest) -> IngestOutcome:
-    """Ingest pasted text as if it were an uploaded `.txt`.
-
-    `media_type="pasted"` overrides what the extension would imply, so the
-    materials list can distinguish a pasted note from an uploaded text file.
-    """
+    """Add pasted text as a new note."""
     deps.database().require_meeting(meeting_id)
 
     with deps.meeting_lock(meeting_id):
-        result = deps.orchestrator().ingest_material(
-            file_bytes=payload.text.encode("utf-8"),
-            filename=payload.filename,
+        result = deps.orchestrator().ingest_pasted_text(
             meeting_id=meeting_id,
-            media_type="pasted",
+            title=payload.filename,
+            text=payload.text,
         )
 
     return IngestOutcome(
@@ -113,6 +108,15 @@ def paste_material(meeting_id: str, payload: PasteRequest) -> IngestOutcome:
         characters=result.get("characters", 0),
         error=result.get("error"),
     )
+
+
+@router.get("/meetings/{meeting_id}/materials/{material_id}/text", response_model=str)
+def get_pasted_text(meeting_id: str, material_id: str) -> str:
+    """Read a pasted note by its ID within the meeting."""
+    material = deps.database().get_material(material_id)
+    if material is None or material.meeting_id != meeting_id or material.media_type != "pasted":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pasted note not found.")
+    return material.text
 
 
 @router.delete("/materials/{material_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -140,9 +140,10 @@ in the first few seconds is not a fault.
 ## Usage
 
 1. **Create a meeting** in the sidebar — title, date, attendees, tags.
-2. **Add materials.** Drag in PDF, DOCX, PPTX or TXT files, or paste text. Each
-   file is parsed, chunked, embedded and indexed in one operation, and reports its
-   own outcome; one bad file in a batch does not sink the others.
+2. **Add materials.** Drag in PDF, DOCX, PPTX or TXT files, or paste text with
+   an optional title. Open a pasted note in Documents to read it. Each file is
+   parsed, chunked, embedded and indexed in one operation and reports its own
+   outcome. If a paste fails, the form keeps your draft for retry.
 3. **Generate a brief.** Recap, action items, topics, agenda and evidence, plus
    the plan that produced it, per-specialist findings with hit and neighbour
    counts, any failed enquiries, and a node-by-node timeline.
@@ -160,7 +161,7 @@ forward.
 
 ## HTTP API
 
-Fourteen endpoints, all under `/api`. The interactive schema is at `/docs`.
+All endpoints are under `/api`. The interactive schema is at `/docs`.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -172,6 +173,7 @@ Fourteen endpoints, all under `/api`. The interactive schema is at `/docs`.
 | `GET` | `/api/meetings/{id}/materials` | List materials |
 | `POST` | `/api/meetings/{id}/materials` | Upload files (multipart, multiple), per-file outcomes |
 | `POST` | `/api/meetings/{id}/materials/text` | Add pasted text |
+| `GET` | `/api/meetings/{id}/materials/{material_id}/text` | Read a pasted note |
 | `DELETE` | `/api/materials/{id}` | Delete a material and its vectors (`204`) |
 | `POST` | `/api/meetings/{id}/brief` | Generate a brief — **costs tokens** |
 | `GET` | `/api/meetings/{id}/briefs` | Brief history (stubs) |

@@ -2,10 +2,10 @@ import { Check, Upload, X } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { asApiError, pasteMaterial, uploadMaterials } from "../api/client";
-import type { ApiError, IngestOutcome } from "../api/client";
+import type { IngestOutcome } from "../api/client";
 import { formatCount, plural } from "../format";
 import type { MeetingTasks } from "../hooks/useMeetingTasks";
-import { Button, ErrorNote, Field, INPUT } from "./controls";
+import { Alert, Button, Field, INPUT } from "./controls";
 
 /** What the parsers in `core/parsing.py` dispatch on. Anything else reads empty. */
 const ACCEPT = ".pdf,.docx,.pptx,.txt";
@@ -128,23 +128,17 @@ function OutcomeRow({ outcome }: { outcome: IngestOutcome }) {
  * entirely, which is exactly the class of silent loss this overhaul exists to
  * fix, so every file gets a line whether it worked or not.
  */
-function Report({
-  outcomes,
-  onDismiss,
-}: {
+interface IngestReport {
+  title: string;
   outcomes: IngestOutcome[];
-  onDismiss: () => void;
-}) {
-  const failed = outcomes.filter((outcome) => !outcome.success).length;
-  const ingested = outcomes.length - failed;
+}
 
+function Report({ title, outcomes, onDismiss }: IngestReport & { onDismiss: () => void }) {
   return (
     <section className="overflow-hidden rounded-xl border border-line bg-panel">
       <header className="flex items-center gap-3 border-b border-line px-4 py-2.5">
-        <h3 className="min-w-0 flex-1 text-sm font-medium text-ink">
-          {failed === 0
-            ? `Added ${plural(ingested, "file")}`
-            : `Added ${ingested} of ${plural(outcomes.length, "file")}`}
+        <h3 role="status" className="min-w-0 flex-1 text-sm font-medium text-ink">
+          {title}
         </h3>
         <Button size="sm" variant="ghost" onClick={onDismiss}>
           Dismiss
@@ -169,19 +163,19 @@ interface UploaderProps {
 }
 
 export function Uploader({ meetingId, busy, run, onIngested }: UploaderProps) {
-  const [outcomes, setOutcomes] = useState<IngestOutcome[] | null>(null);
-  const [error, setError] = useState<ApiError | null>(null);
+  const [report, setReport] = useState<IngestReport | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const [pasting, setPasting] = useState(false);
   const [text, setText] = useState("");
-  const [filename, setFilename] = useState("");
+  const [title, setTitle] = useState("");
 
-  async function ingest(task: () => Promise<IngestOutcome[]>) {
-    setError(null);
-    setOutcomes(null);
+  async function ingest(task: () => Promise<void>, showError: (message: string) => void) {
+    setReport(null);
     try {
-      setOutcomes(await run(meetingId, task));
+      await run(meetingId, task);
     } catch (cause) {
-      setError(asApiError(cause));
+      showError(asApiError(cause).message);
     } finally {
       // Even a batch where everything failed can have changed the meeting: a
       // file that stored and then produced no chunks leaves a material behind.
@@ -190,31 +184,44 @@ export function Uploader({ meetingId, busy, run, onIngested }: UploaderProps) {
   }
 
   function upload(files: File[]) {
+    setUploadError(null);
     void ingest(async () => {
-      const response = await uploadMaterials(meetingId, files);
-      return response.results;
-    });
+      const { results, ingested, failed } = await uploadMaterials(meetingId, files);
+      setReport({
+        title:
+          failed === 0
+            ? `Added ${plural(ingested, "file")}`
+            : `Added ${ingested} of ${plural(results.length, "file")}`,
+        outcomes: results,
+      });
+    }, setUploadError);
   }
 
   function paste() {
     const body = text.trim();
     if (!body) return;
+    const label = title.trim();
+    setPasteError(null);
     void ingest(async () => {
-      const outcome = await pasteMaterial(
-        meetingId,
-        body,
-        filename.trim() || undefined,
-      );
+      const outcome = await pasteMaterial(meetingId, {
+        text: body,
+        ...(label ? { filename: label } : {}),
+      });
+      if (!outcome.success) {
+        setPasteError(outcome.error ?? "Could not add the note.");
+        return;
+      }
       setText("");
-      setFilename("");
+      setTitle("");
       setPasting(false);
-      return [outcome];
-    });
+      setReport({ title: "Note added", outcomes: [outcome] });
+    }, setPasteError);
   }
 
   return (
     <div className="flex flex-col gap-3">
       <Dropzone disabled={busy} onFiles={upload} />
+      {uploadError ? <Alert>{uploadError}</Alert> : null}
 
       {pasting ? (
         <div className="flex flex-col gap-4 rounded-xl border border-line bg-panel px-4 py-4">
@@ -231,21 +238,19 @@ export function Uploader({ meetingId, busy, run, onIngested }: UploaderProps) {
             />
           </Field>
 
-          <Field
-            id="paste-name"
-            label="Name"
-            hint="Optional. Used as the material's filename; defaults to pasted_text.txt."
-          >
+          <Field id="paste-name" label="Title (optional)">
             <input
               id="paste-name"
-              value={filename}
-              onChange={(event) => setFilename(event.target.value)}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
               maxLength={255}
               disabled={busy}
-              placeholder="pasted_text.txt"
+              placeholder="Pasted note"
               className={INPUT}
             />
           </Field>
+
+          {pasteError ? <Alert>{pasteError} Your draft is still here.</Alert> : null}
 
           <div className="flex items-center gap-2">
             <Button
@@ -269,9 +274,8 @@ export function Uploader({ meetingId, busy, run, onIngested }: UploaderProps) {
         </div>
       )}
 
-      {error ? <ErrorNote error={error} /> : null}
-      {outcomes ? (
-        <Report outcomes={outcomes} onDismiss={() => setOutcomes(null)} />
+      {report ? (
+        <Report {...report} onDismiss={() => setReport(null)} />
       ) : null}
     </div>
   );
