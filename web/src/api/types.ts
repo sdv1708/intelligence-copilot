@@ -54,6 +54,7 @@ export interface MaterialOut {
 
 export interface PasteRequest {
   text: string;
+  /** Optional display title for the note. */
   filename?: string;
 }
 

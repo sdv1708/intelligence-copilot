@@ -11,9 +11,7 @@ exception's `str()` and dropped the traceback, so "Failed to parse PDF: " with
 an empty message was a common and useless log line. `logger.exception` keeps
 the traceback.
 
-`parse_pasted_text` used to live here. Pasted text now arrives through
-`parse_file` as a `.txt` upload, with `media_type="pasted"` supplied by the
-caller, so there is one path in and it is the one with tests behind it.
+Pasted notes already contain text and enter the ingestion pipeline after parsing.
 """
 
 from __future__ import annotations

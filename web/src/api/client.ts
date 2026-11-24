@@ -1,5 +1,5 @@
 /**
- * The typed client. Fourteen operations, one per route in `api/routes/`.
+ * The typed client, with one operation per route in `api/routes/`.
  *
  * Every URL is relative. In development Vite proxies `/api` to the FastAPI
  * process (see `vite.config.ts`); in production FastAPI serves this bundle
@@ -17,6 +17,7 @@ import type {
   MaterialOut,
   MeetingCreate,
   MeetingOut,
+  PasteRequest,
   QaResponse,
 } from "./types";
 
@@ -193,14 +194,24 @@ export function uploadMaterials(
 
 export function pasteMaterial(
   meetingId: string,
-  text: string,
-  filename = "pasted_text.txt",
+  payload: PasteRequest,
   options: RequestOptions = {},
 ): Promise<IngestOutcome> {
   return send<IngestOutcome>(
     "POST",
     `/api/meetings/${seg(meetingId)}/materials/text`,
-    { text, filename },
+    payload,
+    options,
+  );
+}
+
+export function getPastedText(
+  meetingId: string,
+  materialId: string,
+  options: RequestOptions = {},
+): Promise<string> {
+  return get<string>(
+    `/api/meetings/${seg(meetingId)}/materials/${seg(materialId)}/text`,
     options,
   );
 }

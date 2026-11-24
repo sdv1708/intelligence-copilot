@@ -98,19 +98,19 @@ class CopilotOrchestrator:
         file_bytes: bytes,
         filename: str,
         meeting_id: str,
-        *,
-        media_type: str | None = None,
     ) -> dict[str, Any]:
-        """Parse, store, chunk, embed and index one document.
+        """Parse, store, chunk, embed and index one uploaded document."""
+        text, media_type = parse_file(file_bytes, filename)
+        return self._ingest_text(meeting_id, filename, media_type, text)
 
-        This is the whole write path in one call, which is the point: there is
-        no way to reach it that stores a material without also indexing it.
-        The Streamlit UI used to add the row itself and then call this to index,
-        so every file was parsed twice and every re-upload of the same filename
-        left a second copy of the document in the index.
-        """
+    def ingest_pasted_text(self, meeting_id: str, title: str, text: str) -> dict[str, Any]:
+        """Add a new note with a display title."""
+        return self._ingest_text(meeting_id, title, "pasted", text.strip())
+
+    def _ingest_text(
+        self, meeting_id: str, filename: str, media_type: str, text: str
+    ) -> dict[str, Any]:
         try:
-            text, detected_type = parse_file(file_bytes, filename)
             if not text.strip():
                 logger.warning("No text could be read out of %s", filename)
                 return {
@@ -118,22 +118,31 @@ class CopilotOrchestrator:
                     "error": f"No readable text could be extracted from '{filename}'.",
                 }
 
-            material_id = self._store_material(
-                meeting_id, filename, media_type or detected_type, text
-            )
+            pasted = media_type == "pasted"
+            if pasted:
+                material_id = self.db.add_material(meeting_id, filename, media_type, text)
+            else:
+                material_id = self._store_upload(meeting_id, filename, media_type, text)
 
             # The runtime's embedder, not a fresh one: this is the model that is
             # already loaded, and in tests it is the one that is not real.
-            chunk_ids = index_material(
-                self.db,
-                material_id,
-                embedder=self.retriever.embedder,
-                settings=self.runtime.settings,
-            )
+            chunk_ids: list[int] = []
+            try:
+                chunk_ids = index_material(
+                    self.db,
+                    material_id,
+                    embedder=self.retriever.embedder,
+                    settings=self.runtime.settings,
+                )
+            finally:
+                if pasted and not chunk_ids:
+                    # Cascade the temporary chunk rows. Retrieval can repair the
+                    # legacy index if a failure occurred while writing it.
+                    self.db.delete_material(material_id)
             if not chunk_ids:
                 return {
                     "success": False,
-                    "material_id": material_id,
+                    "material_id": None if pasted else material_id,
                     "error": f"'{filename}' produced no chunks to index.",
                 }
 
@@ -149,7 +158,7 @@ class CopilotOrchestrator:
             logger.error("Could not ingest %s: %s", filename, error)
             return {"success": False, "error": str(error)}
 
-    def _store_material(
+    def _store_upload(
         self, meeting_id: str, filename: str, media_type: str, text: str
     ) -> str:
         """Return the material id this text should be stored under.
@@ -163,7 +172,7 @@ class CopilotOrchestrator:
         unchanged: str | None = None
 
         for existing in self.db.get_materials(meeting_id):
-            if existing.filename != filename:
+            if existing.media_type == "pasted" or existing.filename != filename:
                 continue
             stored = self.db.get_material(existing.id)
             if unchanged is None and stored is not None and stored.text == text:

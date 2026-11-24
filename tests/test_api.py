@@ -364,6 +364,87 @@ def test_pasted_text_is_marked_as_pasted(client: TestClient, world: World) -> No
     assert listed[0]["media_type"] == "pasted"
 
 
+def test_pastes_have_separate_ids_and_readable_text(
+    client: TestClient, world: World
+) -> None:
+    meeting_id = client.post("/api/meetings", json={"title": "Launch Review"}).json()["id"]
+    materials = f"/api/meetings/{meeting_id}/materials"
+    notes = [
+        ({"text": "The vendor assessment is still open."}, "Pasted note"),
+        ({"text": "Support coverage is confirmed."}, "Pasted note"),
+        (
+            {"text": "The board meets Tuesday.\n\nSend the revised agenda.", "filename": "Board notes"},
+            "Board notes",
+        ),
+        ({"text": "Record the vote separately.", "filename": "Board notes"}, "Board notes"),
+    ]
+
+    expected = {}
+    for payload, title in notes:
+        response = client.post(f"{materials}/text", json=payload)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["success"] is True
+        assert result["filename"] == title
+        assert result["characters"] == len(payload["text"])
+        expected[result["material_id"]] = (title, payload["text"])
+
+    listed = client.get(materials).json()
+    assert len(expected) == len(listed) == len(notes)
+    recalled = deps.orchestrator().retriever.recall(meeting_id, query="board agenda", k=4)
+    assert {entry.chunk.material_id for entry in recalled} == set(expected)
+    for material in listed:
+        material_id = material["id"]
+        title, body = expected[material_id]
+        assert material["filename"] == title
+        assert material["media_type"] == "pasted"
+        assert client.get(f"{materials}/{material_id}/text").json() == body
+        other_meeting = f"/api/meetings/{world.meeting_id}/materials/{material_id}/text"
+        assert client.get(other_meeting).status_code == 404
+
+
+def test_paste_and_upload_with_same_label_are_independent(
+    client: TestClient, world: World
+) -> None:
+    materials = f"/api/meetings/{world.meeting_id}/materials"
+    note = client.post(
+        f"{materials}/text", json={"text": "A pasted note.", "filename": "minutes.txt"}
+    ).json()
+    assert note["success"] is True
+
+    response = client.post(materials, files=[upload("minutes.txt", b"Revised meeting minutes.")])
+    uploaded = response.json()["results"][0]
+    assert uploaded["success"] is True
+    assert client.get(f"{materials}/{note['material_id']}/text").json() == "A pasted note."
+    assert client.get(f"{materials}/{uploaded['material_id']}/text").status_code == 404
+    assert world.db.get_material(world.material_id) is None
+
+
+def test_failed_paste_leaves_no_duplicate_on_retry(
+    client: TestClient, world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    materials = f"/api/meetings/{world.meeting_id}/materials"
+    draft = {"text": "Review the approval conditions.", "filename": "Board notes"}
+
+    def fail_encoding(_texts):
+        raise RetrievalError("Embedding temporarily unavailable.")
+
+    original_chunks = world.db.get_chunks_for_meeting(world.meeting_id)
+    with monkeypatch.context() as patch:
+        patch.setattr(world.embedder, "encode", fail_encoding)
+        response = client.post(f"{materials}/text", json=draft)
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"] == "Embedding temporarily unavailable."
+    assert [entry["id"] for entry in client.get(materials).json()] == [world.material_id]
+    assert world.db.get_chunks_for_meeting(world.meeting_id) == original_chunks
+
+    retry = client.post(f"{materials}/text", json=draft).json()
+    assert retry["success"] is True
+    assert client.get(f"{materials}/{retry['material_id']}/text").json() == draft["text"]
+    assert len(client.get(materials).json()) == 2
+
+
 def test_pasting_nothing_is_refused(client: TestClient, world: World) -> None:
     response = client.post(
         f"/api/meetings/{world.meeting_id}/materials/text", json={"text": ""}
